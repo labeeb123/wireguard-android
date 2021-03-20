@@ -4,10 +4,11 @@
  */
 package com.wireguard.android.model
 
+import android.appwidget.AppWidgetManager
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import androidx.databinding.BaseObservable
@@ -24,6 +25,7 @@ import com.wireguard.android.databinding.ObservableSortedKeyedArrayList
 import com.wireguard.android.util.ErrorMessages
 import com.wireguard.android.util.UserKnobs
 import com.wireguard.android.util.applicationScope
+import com.wireguard.android.widget.VpnSwitchAppWidget
 import com.wireguard.config.Config
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -207,11 +209,20 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
         saveState()
         if (throwable != null)
             throw throwable
+
+        val widgetManager = AppWidgetManager.getInstance(context)
+        val widgetComponent = ComponentName(context, VpnSwitchAppWidget::class.java)
+        val widgetIds = widgetManager.getAppWidgetIds(widgetComponent)
+        for (widgetId in widgetIds) {
+            VpnSwitchAppWidget.updateAppWidget(context, AppWidgetManager.getInstance(context), widgetId)
+        }
+
         newState
     }
 
     class IntentReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent?) {
+            Log.e("TEST", "WORKS")
             applicationScope.launch {
                 val manager = getTunnelManager()
                 if (intent == null) return@launch
@@ -220,17 +231,17 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
                     manager.refreshTunnelStates()
                     return@launch
                 }
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || !UserKnobs.allowRemoteControlIntents.first())
-                    return@launch
+//                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || !UserKnobs.allowRemoteControlIntents.first())
+//                    return@launch
                 val state: Tunnel.State
                 state = when (action) {
                     "com.wireguard.android.action.SET_TUNNEL_UP" -> Tunnel.State.UP
                     "com.wireguard.android.action.SET_TUNNEL_DOWN" -> Tunnel.State.DOWN
                     else -> return@launch
                 }
-                val tunnelName = intent.getStringExtra("tunnel") ?: return@launch
+                val tunnelName = intent.getStringExtra("tunnel")
                 val tunnels = manager.getTunnels()
-                val tunnel = tunnels[tunnelName] ?: return@launch
+                val tunnel = tunnelName?.let{tunnels[tunnelName]} ?: tunnels[0] ?: return@launch
                 try {
                     manager.setTunnelState(tunnel, state)
                 } catch (e: Throwable) {
