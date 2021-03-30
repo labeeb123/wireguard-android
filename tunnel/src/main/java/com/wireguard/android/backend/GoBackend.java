@@ -5,9 +5,16 @@
 
 package com.wireguard.android.backend;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.net.VpnService.Builder;
 import android.os.Build;
+import android.os.Build.VERSION;
+import android.os.Build.VERSION_CODES;
 import android.os.ParcelFileDescriptor;
 import android.system.OsConstants;
 import android.util.Log;
@@ -216,7 +223,11 @@ public final class GoBackend implements Backend {
             final VpnService service;
             if (!vpnService.isDone()) {
                 Log.d(TAG, "Requesting to start VpnService");
-                context.startService(new Intent(context, VpnService.class));
+                if (VERSION.SDK_INT >= VERSION_CODES.O) {
+                    context.startForegroundService(new Intent(context, VpnService.class));
+                } else {
+                    context.startService(new Intent(context, VpnService.class));
+                }
             }
 
             try {
@@ -237,7 +248,7 @@ public final class GoBackend implements Backend {
             final String goConfig = config.toWgUserspaceString();
 
             // Create the vpn tunnel with android API
-            final VpnService.Builder builder = service.getBuilder();
+            final Builder builder = service.getBuilder();
             builder.setSession(tunnel.getName());
 
             for (final String excludedApplication : config.getInterface().getExcludedApplications())
@@ -269,9 +280,9 @@ public final class GoBackend implements Backend {
 
             builder.setMtu(config.getInterface().getMtu().orElse(1280));
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+            if (VERSION.SDK_INT >= VERSION_CODES.Q)
                 builder.setMetered(false);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+            if (VERSION.SDK_INT >= VERSION_CODES.M)
                 service.setUnderlyingNetworks(null);
 
             builder.setBlocking(true);
@@ -345,6 +356,7 @@ public final class GoBackend implements Backend {
      * {@link android.net.VpnService} implementation for {@link GoBackend}
      */
     public static class VpnService extends android.net.VpnService {
+        public static final int FOREGROUND_NOTIFICATION_ID = 0xf42ae;
         @Nullable private GoBackend owner;
 
         public Builder getBuilder() {
@@ -382,11 +394,42 @@ public final class GoBackend implements Backend {
                 if (alwaysOnCallback != null)
                     alwaysOnCallback.alwaysOnTriggered();
             }
+            updateForegroundNotification();
             return super.onStartCommand(intent, flags, startId);
         }
 
         public void setOwner(final GoBackend owner) {
             this.owner = owner;
         }
+
+        private void updateForegroundNotification() {
+            final String NOTIFICATION_CHANNEL_ID = "channel_wireguard_vpn_service";
+
+            Intent startMain = new Intent(Intent.ACTION_MAIN);
+            startMain.addCategory(Intent.CATEGORY_HOME);
+            startMain.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            PendingIntent mConfigureIntent = PendingIntent.getActivity(this, 0, startMain, PendingIntent.FLAG_UPDATE_CURRENT);
+
+
+            NotificationManager mNotificationManager = (NotificationManager) getSystemService(
+                    NOTIFICATION_SERVICE);
+
+            Notification.Builder notificationBuilder = null;
+            if (VERSION.SDK_INT >= VERSION_CODES.O) {
+                mNotificationManager.createNotificationChannel(new NotificationChannel(
+                        NOTIFICATION_CHANNEL_ID, NOTIFICATION_CHANNEL_ID,
+                        NotificationManager.IMPORTANCE_DEFAULT));
+
+                notificationBuilder = new Notification.Builder(this, NOTIFICATION_CHANNEL_ID);
+            }  else {
+                notificationBuilder = new Notification.Builder(this);
+            }
+            Notification  notification = notificationBuilder
+                    .setContentText("vpn service")
+                    .setContentIntent(mConfigureIntent)
+                    .build();
+            startForeground(FOREGROUND_NOTIFICATION_ID, notification);
+        }
+
     }
 }
